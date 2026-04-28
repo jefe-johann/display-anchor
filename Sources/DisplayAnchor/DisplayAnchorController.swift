@@ -1,6 +1,8 @@
 import AppKit
 import CoreGraphics
+#if canImport(DisplayAnchorCore)
 import DisplayAnchorCore
+#endif
 import Foundation
 
 @MainActor
@@ -55,6 +57,7 @@ final class DisplayAnchorController {
     private var frozenSnapshot: WindowSnapshot?
     private var displayCallbackContext: UnsafeMutableRawPointer?
     private var displaysAreSettling = false
+    private var lastKnownPermissionState = AccessibilityPermission.isTrusted
 
     init() {
         do {
@@ -67,14 +70,7 @@ final class DisplayAnchorController {
     func start() {
         registerWorkspaceNotifications()
         registerDisplayNotifications()
-
-        if !AccessibilityPermission.isTrusted {
-            status = .permissionNeeded
-            return
-        }
-
-        saveSnapshot()
-        startStableSnapshotTimer()
+        refreshPermissionState(force: true)
     }
 
     func stop() {
@@ -85,15 +81,37 @@ final class DisplayAnchorController {
         }
     }
 
-    func requestAccessibilityPermission() {
-        AccessibilityPermission.prompt()
-        status = AccessibilityPermission.isTrusted ? .idle : .permissionNeeded
+    func refreshPermissionState(force: Bool = false) {
+        let hasPermission = AccessibilityPermission.isTrusted
+        guard force || hasPermission != lastKnownPermissionState else {
+            return
+        }
+
+        lastKnownPermissionState = hasPermission
+
+        guard hasPermission else {
+            stableSnapshotTimer?.invalidate()
+            restoreTimer?.invalidate()
+            restoreTimer = nil
+            restoreDeadline = nil
+            displaysAreSettling = false
+            frozenSnapshot = nil
+            status = .permissionNeeded
+            return
+        }
+
+        guard !paused else {
+            status = .paused
+            return
+        }
+
+        saveSnapshot()
+        startStableSnapshotTimer()
     }
 
     func snapshotNow() {
         guard AccessibilityPermission.isTrusted else {
             status = .permissionNeeded
-            AccessibilityPermission.prompt()
             return
         }
 
@@ -103,7 +121,6 @@ final class DisplayAnchorController {
     func restoreLastSnapshot() {
         guard AccessibilityPermission.isTrusted else {
             status = .permissionNeeded
-            AccessibilityPermission.prompt()
             return
         }
 

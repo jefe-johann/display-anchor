@@ -4,6 +4,7 @@ set -euo pipefail
 APP_NAME="Display Anchor"
 EXECUTABLE_NAME="DisplayAnchor"
 BUNDLE_ID="com.jeff.DisplayAnchor"
+DEFAULT_RELEASE_CODESIGN_IDENTITY="Developer ID Application: Jeffrey Schumann (M2ABUL7722)"
 CONFIGURATION="${CONFIGURATION:-release}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_ICONSET_DIR="$ROOT_DIR/Resources/AppIcon.iconset"
@@ -14,6 +15,28 @@ APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-}"
+
+resolve_codesign_identity() {
+    local requested_identity="$1"
+
+    if [[ -n "$requested_identity" ]]; then
+        echo "$requested_identity"
+        return
+    fi
+
+    if [[ "$CONFIGURATION" == "release" ]]; then
+        echo "$DEFAULT_RELEASE_CODESIGN_IDENTITY"
+    fi
+}
+
+signing_identity_exists() {
+    local identity="$1"
+
+    [[ -n "$identity" ]] || return 1
+
+    security find-identity -v -p codesigning 2>/dev/null | awk -F'"' -v identity="$identity" '$2 == identity { found = 1 } END { exit(found ? 0 : 1) }'
+}
 
 swift build -c "$CONFIGURATION" --package-path "$ROOT_DIR"
 
@@ -62,5 +85,21 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 PLIST
 
 chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
-codesign --force --sign - --identifier "$BUNDLE_ID" "$APP_DIR"
+
+RESOLVED_CODESIGN_IDENTITY="$(resolve_codesign_identity "$CODESIGN_IDENTITY")"
+
+if [[ -n "$RESOLVED_CODESIGN_IDENTITY" ]]; then
+    if signing_identity_exists "$RESOLVED_CODESIGN_IDENTITY"; then
+        codesign --force --sign "$RESOLVED_CODESIGN_IDENTITY" --identifier "$BUNDLE_ID" "$APP_DIR"
+        echo "Signed $APP_DIR with identity: $RESOLVED_CODESIGN_IDENTITY"
+    else
+        echo "Requested signing identity not found: $RESOLVED_CODESIGN_IDENTITY"
+        echo "Set CODESIGN_IDENTITY to a valid local certificate to sign this build."
+        echo "Continuing without bundle codesign so the project stays buildable on other machines."
+    fi
+else
+    echo "No signing identity configured for CONFIGURATION=$CONFIGURATION."
+    echo "Set CODESIGN_IDENTITY to sign this build."
+fi
+
 echo "Created $APP_DIR"

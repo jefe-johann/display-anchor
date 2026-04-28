@@ -1,5 +1,7 @@
 import AppKit
+#if canImport(DisplayAnchorCore)
 import DisplayAnchorCore
+#endif
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -30,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        controller.refreshPermissionState()
         updateMenuState()
     }
 
@@ -75,8 +78,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openAccessibilitySettings() {
-        controller.requestAccessibilityPermission()
-
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }

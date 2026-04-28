@@ -1,19 +1,14 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+#if canImport(DisplayAnchorCore)
 import DisplayAnchorCore
+#endif
 import Foundation
 
 enum AccessibilityPermission {
     static var isTrusted: Bool {
         AXIsProcessTrusted()
-    }
-
-    static func prompt() {
-        let options = [
-            "AXTrustedCheckOptionPrompt": true
-        ] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
     }
 }
 
