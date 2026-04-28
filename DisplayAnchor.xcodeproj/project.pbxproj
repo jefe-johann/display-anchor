@@ -111,7 +111,7 @@
 					A50000000000000000000001 = {
 						CreatedOnToolsVersion = 16.0;
 						DevelopmentTeam = M2ABUL7722;
-						ProvisioningStyle = Automatic;
+						ProvisioningStyle = Manual;
 					};
 				};
 			};
@@ -190,8 +190,8 @@
 		A80000000000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_IDENTITY = "Developer ID Application: Jeffrey Schumann (M2ABUL7722)";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = M2ABUL7722;
 				ENABLE_HARDENED_RUNTIME = NO;
@@ -218,8 +218,8 @@
 		A80000000000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_IDENTITY = "Developer ID Application: Jeffrey Schumann (M2ABUL7722)";
+				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = M2ABUL7722;
 				ENABLE_HARDENED_RUNTIME = NO;
