@@ -239,10 +239,12 @@ public enum RestoreReadiness: Equatable, Sendable {
 }
 
 public enum RestorePlanner {
+    public static let displayTopologyTolerance: Double = 12
+
     public static func readiness(
         savedTopology: DisplayTopology,
         currentTopology: DisplayTopology,
-        tolerance: Double = 2
+        tolerance: Double = displayTopologyTolerance
     ) -> RestoreReadiness {
         currentTopology.matches(savedTopology, tolerance: tolerance) ? .ready : .missingSavedDisplays
     }

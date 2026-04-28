@@ -288,25 +288,41 @@ final class WindowRestorer {
             return nil
         }
 
-        return windows.first { element in
-            if let title = WindowReader.stringAttribute(kAXTitleAttribute, from: element),
-               title != window.title {
-                return false
-            }
+        return windows
+            .compactMap { element -> (element: AXUIElement, frameDistance: Double)? in
+                if !window.title.isEmpty,
+                   let title = WindowReader.stringAttribute(kAXTitleAttribute, from: element),
+                   title != window.title {
+                    return nil
+                }
 
-            guard let role = WindowReader.stringAttribute(kAXRoleAttribute, from: element),
-                  role == (window.role ?? kAXWindowRole as String) else {
-                return false
-            }
+                if let expectedRole = window.role,
+                   let role = WindowReader.stringAttribute(kAXRoleAttribute, from: element),
+                   role != expectedRole {
+                    return nil
+                }
 
-            guard let position = WindowReader.pointAttribute(kAXPositionAttribute, from: element),
-                  let size = WindowReader.sizeAttribute(kAXSizeAttribute, from: element) else {
-                return false
-            }
+                if let expectedSubrole = window.subrole,
+                   let subrole = WindowReader.stringAttribute(kAXSubroleAttribute, from: element),
+                   subrole != expectedSubrole {
+                    return nil
+                }
 
-            let currentFrame = WindowFrame(CGRect(origin: position, size: size))
-            return currentFrame.isClose(to: window.frame, tolerance: 6)
-        }
+                guard let position = WindowReader.pointAttribute(kAXPositionAttribute, from: element),
+                      let size = WindowReader.sizeAttribute(kAXSizeAttribute, from: element) else {
+                    return nil
+                }
+
+                let currentFrame = WindowFrame(CGRect(origin: position, size: size))
+                return (
+                    element: element,
+                    frameDistance: Self.frameDistance(between: currentFrame, and: window.frame)
+                )
+            }
+            .min { lhs, rhs in
+                lhs.frameDistance < rhs.frameDistance
+            }?
+            .element
     }
 
     private func apply(frame: WindowFrame, to element: AXUIElement) -> Bool {
@@ -333,5 +349,12 @@ final class WindowRestorer {
         )
 
         return sizeResult == .success && positionResult == .success
+    }
+
+    private static func frameDistance(between lhs: WindowFrame, and rhs: WindowFrame) -> Double {
+        abs(lhs.x - rhs.x)
+            + abs(lhs.y - rhs.y)
+            + abs(lhs.width - rhs.width)
+            + abs(lhs.height - rhs.height)
     }
 }

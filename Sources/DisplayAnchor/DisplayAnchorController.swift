@@ -51,6 +51,7 @@ final class DisplayAnchorController {
     private var stableSnapshotTimer: Timer?
     private var restoreTimer: Timer?
     private var restoreDeadline: Date?
+    private var lastStableSnapshot: WindowSnapshot?
     private var frozenSnapshot: WindowSnapshot?
     private var displayCallbackContext: UnsafeMutableRawPointer?
     private var displaysAreSettling = false
@@ -144,7 +145,7 @@ final class DisplayAnchorController {
         paused
     }
 
-    private func saveSnapshot() {
+    private func saveSnapshot(updateStatus: Bool = true) {
         guard AccessibilityPermission.isTrusted, !paused, !displaysAreSettling else {
             return
         }
@@ -153,8 +154,10 @@ final class DisplayAnchorController {
 
         do {
             try store.save(snapshot)
-            frozenSnapshot = snapshot
-            status = .snapshotSaved(snapshot.windows.count)
+            lastStableSnapshot = snapshot
+            if updateStatus {
+                status = .snapshotSaved(snapshot.windows.count)
+            }
         } catch {
             status = .error(error.localizedDescription)
         }
@@ -166,11 +169,18 @@ final class DisplayAnchorController {
         }
 
         displaysAreSettling = true
+
+        // Preserve the earliest stable snapshot for the full disturbance cycle.
+        guard frozenSnapshot == nil else {
+            return
+        }
+
         let snapshot = windowReader.snapshot()
         frozenSnapshot = snapshot
 
         do {
             try store.save(snapshot)
+            lastStableSnapshot = snapshot
         } catch {
             status = .error(error.localizedDescription)
         }
@@ -191,6 +201,9 @@ final class DisplayAnchorController {
         }
 
         displaysAreSettling = true
+        if frozenSnapshot == nil {
+            frozenSnapshot = lastStableSnapshot
+        }
         status = .restoreScheduled
         restoreTimer?.invalidate()
         restoreDeadline = Date().addingTimeInterval(30)
@@ -209,15 +222,14 @@ final class DisplayAnchorController {
 
         if let frozenSnapshot {
             snapshot = frozenSnapshot
+        } else if let lastStableSnapshot {
+            snapshot = lastStableSnapshot
         } else {
             snapshot = try? store.load()
         }
 
         guard let snapshot else {
-            restoreTimer?.invalidate()
-            restoreTimer = nil
-            displaysAreSettling = false
-            status = .error("No Snapshot")
+            finishRestoreCycle(with: .error("No Snapshot"))
             return
         }
 
@@ -228,20 +240,23 @@ final class DisplayAnchorController {
 
         guard readiness == .ready else {
             if let restoreDeadline, Date() >= restoreDeadline {
-                restoreTimer?.invalidate()
-                restoreTimer = nil
-                displaysAreSettling = false
-                status = .restoreSkippedMissingDisplays
+                finishRestoreCycle(with: .restoreSkippedMissingDisplays)
             }
             return
         }
 
+        let restoredCount = restorer.restore(snapshot: snapshot)
+        finishRestoreCycle(with: .restored(restoredCount))
+        saveSnapshot(updateStatus: false)
+    }
+
+    private func finishRestoreCycle(with status: Status) {
         restoreTimer?.invalidate()
         restoreTimer = nil
-        let restoredCount = restorer.restore(snapshot: snapshot)
-        status = .restored(restoredCount)
+        restoreDeadline = nil
         displaysAreSettling = false
-        saveSnapshot()
+        frozenSnapshot = nil
+        self.status = status
     }
 
     private func registerWorkspaceNotifications() {

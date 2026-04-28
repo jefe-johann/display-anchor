@@ -6,6 +6,8 @@ EXECUTABLE_NAME="DisplayAnchor"
 BUNDLE_ID="com.jeff.DisplayAnchor"
 CONFIGURATION="${CONFIGURATION:-release}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_ICONSET_DIR="$ROOT_DIR/Resources/AppIcon.iconset"
+APP_ICON_BASENAME="DisplayAnchor"
 BUILD_DIR="$ROOT_DIR/.build/$CONFIGURATION"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -19,15 +21,26 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BUILD_DIR/$EXECUTABLE_NAME" "$MACOS_DIR/$EXECUTABLE_NAME"
 
+if [[ ! -d "$APP_ICONSET_DIR" ]]; then
+    echo "Missing app icon set at $APP_ICONSET_DIR" >&2
+    exit 1
+fi
+
+iconutil -c icns "$APP_ICONSET_DIR" -o "$RESOURCES_DIR/$APP_ICON_BASENAME.icns"
+
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleDisplayName</key>
+    <string>$APP_NAME</string>
     <key>CFBundleExecutable</key>
     <string>$EXECUTABLE_NAME</string>
     <key>CFBundleIdentifier</key>
     <string>$BUNDLE_ID</string>
+    <key>CFBundleIconFile</key>
+    <string>$APP_ICON_BASENAME</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -49,4 +62,5 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 PLIST
 
 chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
+codesign --force --sign - --identifier "$BUNDLE_ID" "$APP_DIR"
 echo "Created $APP_DIR"

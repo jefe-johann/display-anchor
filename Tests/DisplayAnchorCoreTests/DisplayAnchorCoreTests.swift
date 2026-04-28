@@ -32,6 +32,21 @@ struct DisplayAnchorCoreTests {
         #expect(RestorePlanner.readiness(savedTopology: saved, currentTopology: current) == .missingSavedDisplays)
     }
 
+    @Test("restore readiness allows modest display drift after wake")
+    func restoreReadinessAllowsModestDisplayDrift() {
+        let saved = DisplayTopology(displays: [
+            display(id: 1, uuid: "built-in", x: 0, y: 0, width: 1440, height: 900, isMain: true),
+            display(id: 2, uuid: "external", x: 1440, y: 0, width: 2560, height: 1440, isMain: false)
+        ])
+
+        let current = DisplayTopology(displays: [
+            display(id: 11, uuid: "built-in", x: 8, y: 0, width: 1440, height: 900, isMain: true),
+            display(id: 12, uuid: "external", x: 1434, y: 6, width: 2560, height: 1440, isMain: false)
+        ])
+
+        #expect(RestorePlanner.readiness(savedTopology: saved, currentTopology: current) == .ready)
+    }
+
     @Test("duplicate window matching preserves ordering")
     func duplicateWindowMatchingPreservesOrdering() {
         let saved = [
