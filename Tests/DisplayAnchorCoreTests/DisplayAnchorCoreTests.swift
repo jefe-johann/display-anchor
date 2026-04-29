@@ -68,6 +68,38 @@ struct DisplayAnchorCoreTests {
         #expect(matches[1].currentIndex == 1)
     }
 
+    @Test("bundle mismatch prevents restoring a closed app through another app")
+    func bundleMismatchPreventsRestoringClosedAppThroughAnotherApp() {
+        let saved = [
+            window(pid: 100, bundleIdentifier: "com.example.notes", title: "Untitled", order: 0, x: 0)
+        ]
+
+        let current = [
+            window(pid: 200, bundleIdentifier: "com.example.editor", title: "Untitled", order: 0, x: 800)
+        ]
+
+        let matches = WindowMatcher.match(saved: saved, current: current)
+
+        #expect(matches.isEmpty)
+    }
+
+    @Test("same bundle can match after process identifier changes")
+    func sameBundleCanMatchAfterProcessIdentifierChanges() {
+        let saved = [
+            window(pid: 100, bundleIdentifier: "com.example.notes", title: "Notes", order: 0, x: 0)
+        ]
+
+        let current = [
+            window(pid: 200, bundleIdentifier: "com.example.notes", title: "Notes", order: 0, x: 800)
+        ]
+
+        let matches = WindowMatcher.match(saved: saved, current: current)
+
+        #expect(matches.count == 1)
+        #expect(matches[0].savedIndex == 0)
+        #expect(matches[0].currentIndex == 0)
+    }
+
     @Test("frame tolerance treats tiny macOS coordinate drift as equivalent")
     func frameTolerance() {
         let saved = WindowFrame(x: 10, y: 20, width: 500, height: 300)
@@ -95,8 +127,18 @@ struct DisplayAnchorCoreTests {
     }
 
     private func window(pid: Int32, title: String, order: Int, x: Double) -> WindowRecord {
+        window(pid: pid, bundleIdentifier: "com.example.notes", title: title, order: order, x: x)
+    }
+
+    private func window(
+        pid: Int32,
+        bundleIdentifier: String?,
+        title: String,
+        order: Int,
+        x: Double
+    ) -> WindowRecord {
         WindowRecord(
-            bundleIdentifier: "com.example.notes",
+            bundleIdentifier: bundleIdentifier,
             processIdentifier: pid,
             title: title,
             role: "AXWindow",

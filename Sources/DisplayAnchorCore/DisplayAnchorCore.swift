@@ -200,14 +200,21 @@ public enum WindowMatcher {
 
     public static func score(saved: WindowRecord, candidate: WindowCandidate) -> Int {
         var score = 0
+        let savedBundle = normalizedBundleIdentifier(saved.bundleIdentifier)
+        let candidateBundle = normalizedBundleIdentifier(candidate.bundleIdentifier)
+
+        if let savedBundle {
+            guard candidateBundle == savedBundle else {
+                return 0
+            }
+        }
 
         if saved.processIdentifier == candidate.processIdentifier {
             score += 30
         }
 
-        if let savedBundle = saved.bundleIdentifier,
-           !savedBundle.isEmpty,
-           savedBundle == candidate.bundleIdentifier {
+        if let savedBundle,
+           savedBundle == candidateBundle {
             score += 25
         }
 
@@ -230,6 +237,14 @@ public enum WindowMatcher {
         score += max(0, 5 - abs(saved.order - candidate.order))
 
         return score
+    }
+
+    private static func normalizedBundleIdentifier(_ bundleIdentifier: String?) -> String? {
+        guard let bundleIdentifier, !bundleIdentifier.isEmpty else {
+            return nil
+        }
+
+        return bundleIdentifier
     }
 }
 

@@ -15,6 +15,7 @@ final class DisplayAnchorController {
         case restoreScheduled
         case restored(Int)
         case restoreSkippedMissingDisplays
+        case restoreSkippedWindowsUnavailable
         case error(String)
 
         var menuText: String {
@@ -33,6 +34,8 @@ final class DisplayAnchorController {
                 return "Restored: \(count) Windows"
             case .restoreSkippedMissingDisplays:
                 return "Skipped: Displays Not Ready"
+            case .restoreSkippedWindowsUnavailable:
+                return "Skipped: Windows Not Ready"
             case .error(let message):
                 return "Error: \(message)"
             }
@@ -49,12 +52,17 @@ final class DisplayAnchorController {
     private let windowReader = WindowReader()
     private let restorer = WindowRestorer()
     private let store: SnapshotStore
+    private let diagnostics = DiagnosticsLog()
+    private let restoreRetryInterval: TimeInterval = 2
+    private let restoreTimeout: TimeInterval = 180
+    private let failedRestoreSnapshotHold: TimeInterval = 600
     private var paused = false
     private var stableSnapshotTimer: Timer?
     private var restoreTimer: Timer?
     private var restoreDeadline: Date?
     private var lastStableSnapshot: WindowSnapshot?
     private var frozenSnapshot: WindowSnapshot?
+    private var automaticSnapshotSuppressedUntil: Date?
     private var displayCallbackContext: UnsafeMutableRawPointer?
     private var displaysAreSettling = false
     private var lastKnownPermissionState = AccessibilityPermission.isTrusted
@@ -90,6 +98,7 @@ final class DisplayAnchorController {
         lastKnownPermissionState = hasPermission
 
         guard hasPermission else {
+            diagnostics.write("permission missing; timers stopped")
             stableSnapshotTimer?.invalidate()
             restoreTimer?.invalidate()
             restoreTimer = nil
@@ -101,11 +110,13 @@ final class DisplayAnchorController {
         }
 
         guard !paused else {
+            diagnostics.write("permission available but app is paused")
             status = .paused
             return
         }
 
-        saveSnapshot()
+        diagnostics.write("permission available; starting automatic snapshots")
+        saveSnapshot(reason: "permission-refresh")
         startStableSnapshotTimer()
     }
 
@@ -115,7 +126,7 @@ final class DisplayAnchorController {
             return
         }
 
-        saveSnapshot()
+        saveSnapshot(reason: "manual", bypassAutomaticGuards: true)
     }
 
     func restoreLastSnapshot() {
@@ -153,7 +164,7 @@ final class DisplayAnchorController {
         if isPaused {
             stableSnapshotTimer?.invalidate()
         } else if AccessibilityPermission.isTrusted {
-            saveSnapshot()
+            saveSnapshot(reason: "unpaused", bypassAutomaticGuards: true)
             startStableSnapshotTimer()
         }
     }
@@ -162,43 +173,84 @@ final class DisplayAnchorController {
         paused
     }
 
-    private func saveSnapshot(updateStatus: Bool = true) {
+    private func saveSnapshot(
+        updateStatus: Bool = true,
+        reason: String,
+        bypassAutomaticGuards: Bool = false
+    ) {
         guard AccessibilityPermission.isTrusted, !paused, !displaysAreSettling else {
             return
         }
 
         let snapshot = windowReader.snapshot()
 
+        if !bypassAutomaticGuards {
+            if let automaticSnapshotSuppressedUntil,
+               Date() < automaticSnapshotSuppressedUntil {
+                diagnostics.write("snapshot skipped reason=\(reason) holdUntil=\(Self.format(automaticSnapshotSuppressedUntil))")
+                return
+            }
+
+            if let lastStableSnapshot,
+               RestorePlanner.readiness(
+                   savedTopology: lastStableSnapshot.topology,
+                   currentTopology: snapshot.topology
+               ) != .ready {
+                diagnostics.write("snapshot skipped reason=\(reason) topology-changed current=\(Self.describe(snapshot.topology)) lastStable=\(Self.describe(lastStableSnapshot.topology))")
+                return
+            }
+        }
+
+        automaticSnapshotSuppressedUntil = nil
+
         do {
             try store.save(snapshot)
             lastStableSnapshot = snapshot
+            diagnostics.write("snapshot saved reason=\(reason) windows=\(snapshot.windows.count) topology=\(Self.describe(snapshot.topology))")
             if updateStatus {
                 status = .snapshotSaved(snapshot.windows.count)
             }
         } catch {
+            diagnostics.write("snapshot error reason=\(reason) error=\(error.localizedDescription)")
             status = .error(error.localizedDescription)
         }
     }
 
-    private func freezeCurrentSnapshot() {
+    private func freezeCurrentSnapshot(reason: String) {
         guard AccessibilityPermission.isTrusted, !paused else {
             return
         }
 
         displaysAreSettling = true
+        diagnostics.write("freeze requested reason=\(reason)")
 
         // Preserve the earliest stable snapshot for the full disturbance cycle.
         guard frozenSnapshot == nil else {
+            diagnostics.write("freeze kept existing snapshot reason=\(reason)")
             return
         }
 
-        let snapshot = windowReader.snapshot()
+        let liveSnapshot = windowReader.snapshot()
+        let snapshot: WindowSnapshot
+        if let lastStableSnapshot,
+           RestorePlanner.readiness(
+               savedTopology: lastStableSnapshot.topology,
+               currentTopology: liveSnapshot.topology
+           ) != .ready {
+            snapshot = lastStableSnapshot
+            diagnostics.write("freeze reused last stable snapshot reason=\(reason) liveTopology=\(Self.describe(liveSnapshot.topology)) stableTopology=\(Self.describe(lastStableSnapshot.topology))")
+        } else {
+            snapshot = liveSnapshot
+        }
+
         frozenSnapshot = snapshot
 
         do {
             try store.save(snapshot)
             lastStableSnapshot = snapshot
+            diagnostics.write("freeze saved snapshot reason=\(reason) windows=\(snapshot.windows.count) topology=\(Self.describe(snapshot.topology))")
         } catch {
+            diagnostics.write("freeze error reason=\(reason) error=\(error.localizedDescription)")
             status = .error(error.localizedDescription)
         }
     }
@@ -207,12 +259,12 @@ final class DisplayAnchorController {
         stableSnapshotTimer?.invalidate()
         stableSnapshotTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.saveSnapshot()
+                self?.saveSnapshot(reason: "timer")
             }
         }
     }
 
-    private func scheduleRestore() {
+    private func scheduleRestore(reason: String) {
         guard AccessibilityPermission.isTrusted, !paused else {
             return
         }
@@ -221,11 +273,12 @@ final class DisplayAnchorController {
         if frozenSnapshot == nil {
             frozenSnapshot = lastStableSnapshot
         }
+        diagnostics.write("restore scheduled reason=\(reason) snapshotWindows=\(frozenSnapshot?.windows.count ?? 0) snapshotTopology=\(frozenSnapshot.map { Self.describe($0.topology) } ?? "none")")
         status = .restoreScheduled
         restoreTimer?.invalidate()
-        restoreDeadline = Date().addingTimeInterval(30)
+        restoreDeadline = Date().addingTimeInterval(restoreTimeout)
 
-        restoreTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        restoreTimer = Timer.scheduledTimer(withTimeInterval: restoreRetryInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.attemptScheduledRestore()
             }
@@ -246,6 +299,8 @@ final class DisplayAnchorController {
         }
 
         guard let snapshot else {
+            diagnostics.write("restore failed: no snapshot")
+            suppressAutomaticSnapshotsAfterFailedRestore()
             finishRestoreCycle(with: .error("No Snapshot"))
             return
         }
@@ -256,15 +311,31 @@ final class DisplayAnchorController {
         )
 
         guard readiness == .ready else {
+            diagnostics.write("restore waiting: displays not ready current=\(Self.describe(DisplayReader.currentTopology())) saved=\(Self.describe(snapshot.topology))")
             if let restoreDeadline, Date() >= restoreDeadline {
+                diagnostics.write("restore skipped: displays not ready before deadline")
+                suppressAutomaticSnapshotsAfterFailedRestore()
                 finishRestoreCycle(with: .restoreSkippedMissingDisplays)
             }
             return
         }
 
         let restoredCount = restorer.restore(snapshot: snapshot)
+        diagnostics.write("restore attempt restored=\(restoredCount) savedWindows=\(snapshot.windows.count)")
+
+        guard restoredCount > 0 || snapshot.windows.isEmpty else {
+            if let restoreDeadline, Date() >= restoreDeadline {
+                diagnostics.write("restore skipped: windows unavailable before deadline")
+                suppressAutomaticSnapshotsAfterFailedRestore()
+                finishRestoreCycle(with: .restoreSkippedWindowsUnavailable)
+            }
+            return
+        }
+
         finishRestoreCycle(with: .restored(restoredCount))
-        saveSnapshot(updateStatus: false)
+        if restoredCount > 0 {
+            saveSnapshot(updateStatus: false, reason: "post-restore", bypassAutomaticGuards: true)
+        }
     }
 
     private func finishRestoreCycle(with status: Status) {
@@ -274,6 +345,7 @@ final class DisplayAnchorController {
         displaysAreSettling = false
         frozenSnapshot = nil
         self.status = status
+        diagnostics.write("restore cycle finished status=\(status.menuText)")
     }
 
     private func registerWorkspaceNotifications() {
@@ -285,7 +357,27 @@ final class DisplayAnchorController {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.freezeCurrentSnapshot()
+                self?.freezeCurrentSnapshot(reason: "will-sleep")
+            }
+        }
+
+        center.addObserver(
+            forName: NSWorkspace.screensDidSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.freezeCurrentSnapshot(reason: "screens-sleep")
+            }
+        }
+
+        center.addObserver(
+            forName: NSWorkspace.sessionDidResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.freezeCurrentSnapshot(reason: "session-inactive")
             }
         }
 
@@ -295,7 +387,7 @@ final class DisplayAnchorController {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.scheduleRestore()
+                self?.scheduleRestore(reason: "did-wake")
             }
         }
 
@@ -305,7 +397,17 @@ final class DisplayAnchorController {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.scheduleRestore()
+                self?.scheduleRestore(reason: "screens-wake")
+            }
+        }
+
+        center.addObserver(
+            forName: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.scheduleRestore(reason: "session-active")
             }
         }
     }
@@ -325,10 +427,30 @@ final class DisplayAnchorController {
 
         Task { @MainActor in
             if flags.contains(.beginConfigurationFlag) {
-                controller.freezeCurrentSnapshot()
+                controller.freezeCurrentSnapshot(reason: "display-begin")
             } else {
-                controller.scheduleRestore()
+                controller.scheduleRestore(reason: "display-end")
             }
         }
+    }
+
+    private func suppressAutomaticSnapshotsAfterFailedRestore() {
+        automaticSnapshotSuppressedUntil = Date().addingTimeInterval(failedRestoreSnapshotHold)
+    }
+
+    private static func describe(_ topology: DisplayTopology) -> String {
+        topology.displays
+            .map { display in
+                let frame = display.frame
+                let uuid = display.uuid.map { String($0.prefix(8)) } ?? "no-uuid"
+                return "\(uuid):id=\(display.id):main=\(display.isMain):frame=\(Int(frame.x)),\(Int(frame.y)),\(Int(frame.width)),\(Int(frame.height))"
+            }
+            .joined(separator: "|")
+    }
+
+    private static func format(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
     }
 }

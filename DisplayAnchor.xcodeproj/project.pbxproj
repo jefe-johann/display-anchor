@@ -12,6 +12,7 @@
 		A10000000000000000000003 /* SystemState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* SystemState.swift */; };
 		A10000000000000000000004 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* main.swift */; };
 		A10000000000000000000005 /* DisplayAnchorCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* DisplayAnchorCore.swift */; };
+		A10000000000000000000006 /* DiagnosticsLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* DiagnosticsLog.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -21,6 +22,7 @@
 		A20000000000000000000004 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		A20000000000000000000005 /* DisplayAnchorCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayAnchorCore.swift; sourceTree = "<group>"; };
 		A20000000000000000000006 /* Display Anchor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Display Anchor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000007 /* DiagnosticsLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsLog.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -64,6 +66,7 @@
 			children = (
 				A20000000000000000000001 /* AppDelegate.swift */,
 				A20000000000000000000002 /* DisplayAnchorController.swift */,
+				A20000000000000000000007 /* DiagnosticsLog.swift */,
 				A20000000000000000000003 /* SystemState.swift */,
 				A20000000000000000000004 /* main.swift */,
 			);
@@ -150,6 +153,7 @@
 			files = (
 				A10000000000000000000001 /* AppDelegate.swift in Sources */,
 				A10000000000000000000002 /* DisplayAnchorController.swift in Sources */,
+				A10000000000000000000006 /* DiagnosticsLog.swift in Sources */,
 				A10000000000000000000003 /* SystemState.swift in Sources */,
 				A10000000000000000000004 /* main.swift in Sources */,
 				A10000000000000000000005 /* DisplayAnchorCore.swift in Sources */,
