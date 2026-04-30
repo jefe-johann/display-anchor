@@ -13,6 +13,7 @@ final class DisplayAnchorController {
         case permissionNeeded
         case snapshotSaved(Int)
         case restoreScheduled
+        case restoreWaitingForUnlock
         case restored(Int)
         case restoreSkippedMissingDisplays
         case restoreSkippedWindowsUnavailable
@@ -30,6 +31,8 @@ final class DisplayAnchorController {
                 return "Snapshot Saved: \(count) Windows"
             case .restoreScheduled:
                 return "Waiting for Displays"
+            case .restoreWaitingForUnlock:
+                return "Waiting for Unlock"
             case .restored(let count):
                 return "Restored: \(count) Windows"
             case .restoreSkippedMissingDisplays:
@@ -182,6 +185,11 @@ final class DisplayAnchorController {
             return
         }
 
+        guard UserSessionState.isUnlocked else {
+            diagnostics.write("snapshot skipped reason=\(reason) session-locked")
+            return
+        }
+
         let snapshot = windowReader.snapshot()
 
         if !bypassAutomaticGuards {
@@ -230,6 +238,19 @@ final class DisplayAnchorController {
             return
         }
 
+        if !UserSessionState.isUnlocked, let lastStableSnapshot {
+            frozenSnapshot = lastStableSnapshot
+
+            do {
+                try store.save(lastStableSnapshot)
+                diagnostics.write("freeze reused last stable snapshot reason=\(reason) session-locked stableTopology=\(Self.describe(lastStableSnapshot.topology))")
+            } catch {
+                diagnostics.write("freeze error reason=\(reason) error=\(error.localizedDescription)")
+                status = .error(error.localizedDescription)
+            }
+            return
+        }
+
         let liveSnapshot = windowReader.snapshot()
         let snapshot: WindowSnapshot
         if let lastStableSnapshot,
@@ -274,9 +295,9 @@ final class DisplayAnchorController {
             frozenSnapshot = lastStableSnapshot
         }
         diagnostics.write("restore scheduled reason=\(reason) snapshotWindows=\(frozenSnapshot?.windows.count ?? 0) snapshotTopology=\(frozenSnapshot.map { Self.describe($0.topology) } ?? "none")")
-        status = .restoreScheduled
+        status = UserSessionState.isUnlocked ? .restoreScheduled : .restoreWaitingForUnlock
         restoreTimer?.invalidate()
-        restoreDeadline = Date().addingTimeInterval(restoreTimeout)
+        restoreDeadline = UserSessionState.isUnlocked ? Date().addingTimeInterval(restoreTimeout) : nil
 
         restoreTimer = Timer.scheduledTimer(withTimeInterval: restoreRetryInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -288,6 +309,18 @@ final class DisplayAnchorController {
     }
 
     private func attemptScheduledRestore() {
+        guard UserSessionState.isUnlocked else {
+            restoreDeadline = nil
+            status = .restoreWaitingForUnlock
+            diagnostics.write("restore waiting: session locked")
+            return
+        }
+
+        if restoreDeadline == nil {
+            restoreDeadline = Date().addingTimeInterval(restoreTimeout)
+            diagnostics.write("restore deadline started after unlock")
+        }
+
         let snapshot: WindowSnapshot?
 
         if let frozenSnapshot {
@@ -377,6 +410,7 @@ final class DisplayAnchorController {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                self?.diagnostics.write("notification session-inactive")
                 self?.freezeCurrentSnapshot(reason: "session-inactive")
             }
         }
@@ -407,6 +441,7 @@ final class DisplayAnchorController {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                self?.diagnostics.write("notification session-active")
                 self?.scheduleRestore(reason: "session-active")
             }
         }

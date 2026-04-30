@@ -12,6 +12,16 @@ enum AccessibilityPermission {
     }
 }
 
+enum UserSessionState {
+    static var isUnlocked: Bool {
+        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else {
+            return true
+        }
+
+        return session["CGSSessionScreenIsLocked"] as? Bool != true
+    }
+}
+
 enum DisplayReader {
     static func currentTopology() -> DisplayTopology {
         var displayCount: UInt32 = 0
