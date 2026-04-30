@@ -56,7 +56,7 @@ final class DisplayAnchorController {
     private let restorer = WindowRestorer()
     private let store: SnapshotStore
     private let diagnostics = DiagnosticsLog()
-    private let restoreRetryInterval: TimeInterval = 2
+    private let restoreRetryInterval: TimeInterval = 0.25
     private let restoreTimeout: TimeInterval = 180
     private let failedRestoreSnapshotHold: TimeInterval = 600
     private var paused = false
@@ -66,6 +66,7 @@ final class DisplayAnchorController {
     private var lastStableSnapshot: WindowSnapshot?
     private var frozenSnapshot: WindowSnapshot?
     private var automaticSnapshotSuppressedUntil: Date?
+    private var lastRestoreWaitMessage: String?
     private var displayCallbackContext: UnsafeMutableRawPointer?
     private var displaysAreSettling = false
     private var lastKnownPermissionState = AccessibilityPermission.isTrusted
@@ -294,6 +295,7 @@ final class DisplayAnchorController {
         if frozenSnapshot == nil {
             frozenSnapshot = lastStableSnapshot
         }
+        lastRestoreWaitMessage = nil
         diagnostics.write("restore scheduled reason=\(reason) snapshotWindows=\(frozenSnapshot?.windows.count ?? 0) snapshotTopology=\(frozenSnapshot.map { Self.describe($0.topology) } ?? "none")")
         status = UserSessionState.isUnlocked ? .restoreScheduled : .restoreWaitingForUnlock
         restoreTimer?.invalidate()
@@ -312,7 +314,7 @@ final class DisplayAnchorController {
         guard UserSessionState.isUnlocked else {
             restoreDeadline = nil
             status = .restoreWaitingForUnlock
-            diagnostics.write("restore waiting: session locked")
+            writeRestoreWait("restore waiting: session locked")
             return
         }
 
@@ -344,7 +346,7 @@ final class DisplayAnchorController {
         )
 
         guard readiness == .ready else {
-            diagnostics.write("restore waiting: displays not ready current=\(Self.describe(DisplayReader.currentTopology())) saved=\(Self.describe(snapshot.topology))")
+            writeRestoreWait("restore waiting: displays not ready current=\(Self.describe(DisplayReader.currentTopology())) saved=\(Self.describe(snapshot.topology))")
             if let restoreDeadline, Date() >= restoreDeadline {
                 diagnostics.write("restore skipped: displays not ready before deadline")
                 suppressAutomaticSnapshotsAfterFailedRestore()
@@ -353,8 +355,10 @@ final class DisplayAnchorController {
             return
         }
 
+        let startedAt = Date()
+        diagnostics.write("restore attempt starting savedWindows=\(snapshot.windows.count)")
         let restoredCount = restorer.restore(snapshot: snapshot)
-        diagnostics.write("restore attempt restored=\(restoredCount) savedWindows=\(snapshot.windows.count)")
+        diagnostics.write("restore attempt finished restored=\(restoredCount) savedWindows=\(snapshot.windows.count) duration=\(Self.formatDuration(Date().timeIntervalSince(startedAt)))")
 
         guard restoredCount > 0 || snapshot.windows.isEmpty else {
             if let restoreDeadline, Date() >= restoreDeadline {
@@ -377,6 +381,7 @@ final class DisplayAnchorController {
         restoreDeadline = nil
         displaysAreSettling = false
         frozenSnapshot = nil
+        lastRestoreWaitMessage = nil
         self.status = status
         diagnostics.write("restore cycle finished status=\(status.menuText)")
     }
@@ -473,6 +478,15 @@ final class DisplayAnchorController {
         automaticSnapshotSuppressedUntil = Date().addingTimeInterval(failedRestoreSnapshotHold)
     }
 
+    private func writeRestoreWait(_ message: String) {
+        guard lastRestoreWaitMessage != message else {
+            return
+        }
+
+        lastRestoreWaitMessage = message
+        diagnostics.write(message)
+    }
+
     private static func describe(_ topology: DisplayTopology) -> String {
         topology.displays
             .map { display in
@@ -487,5 +501,9 @@ final class DisplayAnchorController {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: date)
+    }
+
+    private static func formatDuration(_ duration: TimeInterval) -> String {
+        String(format: "%.2fs", duration)
     }
 }
