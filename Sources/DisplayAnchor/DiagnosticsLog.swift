@@ -24,9 +24,11 @@ final class DiagnosticsLog {
         guard let logURL else { return }
 
         do {
-            if let size = try FileManager.default.attributesOfItem(atPath: logURL.path)[.size] as? NSNumber,
-               size.intValue > maxLogBytes {
-                try Data().write(to: logURL, options: [.atomic])
+            if FileManager.default.fileExists(atPath: logURL.path) {
+                if let size = try FileManager.default.attributesOfItem(atPath: logURL.path)[.size] as? NSNumber,
+                   size.intValue > maxLogBytes {
+                    try Data().write(to: logURL, options: [.atomic])
+                }
             }
 
             let line = "\(Self.format(Date())) \(message)\n"
