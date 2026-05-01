@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import DisplayAnchorCore
 
@@ -109,6 +110,91 @@ struct DisplayAnchorCoreTests {
         #expect(!current.isClose(to: saved, tolerance: 1))
     }
 
+    @Test("snapshot merge preserves affected display and updates unaffected display")
+    func snapshotMergePreservesAffectedDisplayAndUpdatesUnaffectedDisplay() {
+        let previous = snapshot(windows: [
+            window(pid: 100, title: "Old Primary", order: 0, x: 0, displayID: 1),
+            window(pid: 200, title: "Old Fullscreen Display", order: 1, x: 800, displayID: 2)
+        ])
+
+        let candidate = snapshot(windows: [
+            window(pid: 300, title: "New Primary", order: 0, x: 10, displayID: 1),
+            window(pid: 400, title: "Partial Fullscreen Display", order: 1, x: 900, displayID: 2)
+        ])
+
+        let merged = SnapshotMerger.merge(
+            previous: previous,
+            candidate: candidate,
+            preservingDisplayIDs: [2]
+        )
+
+        #expect(merged.windows.map(\.title) == ["New Primary", "Old Fullscreen Display"])
+        #expect(merged.windows.map(\.order) == [0, 1])
+    }
+
+    @Test("snapshot merge preserves saved windows without display IDs")
+    func snapshotMergePreservesSavedWindowsWithoutDisplayIDs() {
+        let previous = snapshot(windows: [
+            window(pid: 100, title: "Unknown Display", order: 0, x: 0, displayID: nil),
+            window(pid: 200, title: "Old Fullscreen Display", order: 1, x: 800, displayID: 2)
+        ])
+
+        let candidate = snapshot(windows: [
+            window(pid: 300, title: "New Primary", order: 0, x: 10, displayID: 1),
+            window(pid: 400, title: "Candidate Unknown", order: 1, x: 20, displayID: nil)
+        ])
+
+        let merged = SnapshotMerger.merge(
+            previous: previous,
+            candidate: candidate,
+            preservingDisplayIDs: [2]
+        )
+
+        #expect(merged.windows.map(\.title) == ["Unknown Display", "New Primary", "Old Fullscreen Display"])
+        #expect(!merged.windows.map(\.title).contains("Candidate Unknown"))
+    }
+
+    @Test("snapshot merge without affected displays returns normalized candidate")
+    func snapshotMergeWithoutAffectedDisplaysReturnsCandidate() {
+        let previous = snapshot(windows: [
+            window(pid: 100, title: "Old Primary", order: 0, x: 0, displayID: 1)
+        ])
+
+        let candidate = snapshot(windows: [
+            window(pid: 200, title: "Candidate Unknown", order: 9, x: 20, displayID: nil),
+            window(pid: 300, title: "New Primary", order: 4, x: 10, displayID: 1)
+        ])
+
+        let merged = SnapshotMerger.merge(
+            previous: previous,
+            candidate: candidate,
+            preservingDisplayIDs: []
+        )
+
+        #expect(merged.windows.map(\.title) == ["Candidate Unknown", "New Primary"])
+        #expect(merged.windows.map(\.order) == [0, 1])
+    }
+
+    @Test("snapshot merge normalizes merged window order")
+    func snapshotMergeNormalizesMergedWindowOrder() {
+        let previous = snapshot(windows: [
+            window(pid: 100, title: "Preserved Late", order: 20, x: 800, displayID: 2)
+        ])
+
+        let candidate = snapshot(windows: [
+            window(pid: 200, title: "Replacement Early", order: 10, x: 0, displayID: 1)
+        ])
+
+        let merged = SnapshotMerger.merge(
+            previous: previous,
+            candidate: candidate,
+            preservingDisplayIDs: [2]
+        )
+
+        #expect(merged.windows.map(\.title) == ["Replacement Early", "Preserved Late"])
+        #expect(merged.windows.map(\.order) == [0, 1])
+    }
+
     private func display(
         id: UInt32,
         uuid: String,
@@ -126,8 +212,36 @@ struct DisplayAnchorCoreTests {
         )
     }
 
+    private func snapshot(windows: [WindowRecord]) -> WindowSnapshot {
+        WindowSnapshot(
+            createdAt: Date(timeIntervalSince1970: 1_000),
+            topology: DisplayTopology(displays: [
+                display(id: 1, uuid: "built-in", x: 0, y: 0, width: 1440, height: 900, isMain: true),
+                display(id: 2, uuid: "external", x: 1440, y: 0, width: 2560, height: 1440, isMain: false)
+            ]),
+            windows: windows
+        )
+    }
+
     private func window(pid: Int32, title: String, order: Int, x: Double) -> WindowRecord {
         window(pid: pid, bundleIdentifier: "com.example.notes", title: title, order: order, x: x)
+    }
+
+    private func window(
+        pid: Int32,
+        title: String,
+        order: Int,
+        x: Double,
+        displayID: UInt32?
+    ) -> WindowRecord {
+        window(
+            pid: pid,
+            bundleIdentifier: "com.example.notes",
+            title: title,
+            order: order,
+            x: x,
+            displayID: displayID
+        )
     }
 
     private func window(
@@ -135,7 +249,8 @@ struct DisplayAnchorCoreTests {
         bundleIdentifier: String?,
         title: String,
         order: Int,
-        x: Double
+        x: Double,
+        displayID: UInt32? = 1
     ) -> WindowRecord {
         WindowRecord(
             bundleIdentifier: bundleIdentifier,
@@ -144,7 +259,7 @@ struct DisplayAnchorCoreTests {
             role: "AXWindow",
             subrole: "AXStandardWindow",
             frame: WindowFrame(x: x, y: 0, width: 500, height: 500),
-            displayID: 1,
+            displayID: displayID,
             order: order
         )
     }

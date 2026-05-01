@@ -152,6 +152,65 @@ public struct WindowSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public enum SnapshotMerger {
+    public static func merge(
+        previous: WindowSnapshot,
+        candidate: WindowSnapshot,
+        preservingDisplayIDs displayIDsToPreserve: Set<UInt32>
+    ) -> WindowSnapshot {
+        guard !displayIDsToPreserve.isEmpty else {
+            return normalized(candidate)
+        }
+
+        let preservedWindows = previous.windows.filter { window in
+            guard let displayID = window.displayID else {
+                return true
+            }
+
+            return displayIDsToPreserve.contains(displayID)
+        }
+
+        let replacementWindows = candidate.windows.filter { window in
+            guard let displayID = window.displayID else {
+                return false
+            }
+
+            return !displayIDsToPreserve.contains(displayID)
+        }
+
+        let mergedWindows = (preservedWindows + replacementWindows)
+            .sorted { lhs, rhs in
+                if lhs.order == rhs.order {
+                    return lhs.processIdentifier < rhs.processIdentifier
+                }
+
+                return lhs.order < rhs.order
+            }
+
+        return WindowSnapshot(
+            createdAt: candidate.createdAt,
+            topology: candidate.topology,
+            windows: normalized(mergedWindows)
+        )
+    }
+
+    public static func normalized(_ snapshot: WindowSnapshot) -> WindowSnapshot {
+        WindowSnapshot(
+            createdAt: snapshot.createdAt,
+            topology: snapshot.topology,
+            windows: normalized(snapshot.windows)
+        )
+    }
+
+    private static func normalized(_ windows: [WindowRecord]) -> [WindowRecord] {
+        windows.enumerated().map { order, window in
+            var normalizedWindow = window
+            normalizedWindow.order = order
+            return normalizedWindow
+        }
+    }
+}
+
 public struct WindowMatch: Equatable, Sendable {
     public var savedIndex: Int
     public var currentIndex: Int

@@ -55,6 +55,85 @@ enum DisplayReader {
     }
 }
 
+struct FullscreenWindowScan {
+    var screensHaveSeparateSpaces: Bool
+    var fullscreenWindowCount: Int
+    var affectedDisplayIDs: Set<UInt32>
+    var unidentifiedFullscreenWindowCount: Int
+
+    var hasFullscreenWindows: Bool {
+        fullscreenWindowCount > 0
+    }
+
+    var hasIdentifiedAffectedDisplays: Bool {
+        hasFullscreenWindows
+            && !affectedDisplayIDs.isEmpty
+            && unidentifiedFullscreenWindowCount == 0
+    }
+}
+
+enum FullscreenWindowDetector {
+    private static let appProcessID = ProcessInfo.processInfo.processIdentifier
+
+    static func scan(topology: DisplayTopology) -> FullscreenWindowScan {
+        guard let rawWindows = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return FullscreenWindowScan(
+                screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces,
+                fullscreenWindowCount: 0,
+                affectedDisplayIDs: [],
+                unidentifiedFullscreenWindowCount: 0
+            )
+        }
+
+        var fullscreenWindowCount = 0
+        var affectedDisplayIDs = Set<UInt32>()
+        var unidentifiedFullscreenWindowCount = 0
+
+        for windowInfo in rawWindows {
+            guard let processID = windowInfo[kCGWindowOwnerPID as String] as? Int32,
+                  processID != appProcessID else {
+                continue
+            }
+
+            guard let layer = windowInfo[kCGWindowLayer as String] as? Int, layer == 0 else {
+                continue
+            }
+
+            guard let boundsDictionary = windowInfo[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary) else {
+                continue
+            }
+
+            guard bounds.width > 24, bounds.height > 24 else {
+                continue
+            }
+
+            guard let axWindow = WindowReader.accessibilityWindow(processID: processID, bounds: bounds),
+                  WindowReader.isFullscreen(axWindow) else {
+                continue
+            }
+
+            fullscreenWindowCount += 1
+
+            if let displayID = topology.displayID(containing: WindowFrame(bounds)) {
+                affectedDisplayIDs.insert(displayID)
+            } else {
+                unidentifiedFullscreenWindowCount += 1
+            }
+        }
+
+        return FullscreenWindowScan(
+            screensHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces,
+            fullscreenWindowCount: fullscreenWindowCount,
+            affectedDisplayIDs: affectedDisplayIDs,
+            unidentifiedFullscreenWindowCount: unidentifiedFullscreenWindowCount
+        )
+    }
+}
+
 final class WindowReader {
     private let appProcessID = ProcessInfo.processInfo.processIdentifier
 
@@ -104,7 +183,7 @@ final class WindowReader {
                 return nil
             }
 
-            let axWindow = accessibilityWindow(processID: processID, bounds: bounds)
+            let axWindow = Self.accessibilityWindow(processID: processID, bounds: bounds)
             let role = axWindow.flatMap { Self.stringAttribute(kAXRoleAttribute, from: $0) }
             let subrole = axWindow.flatMap { Self.stringAttribute(kAXSubroleAttribute, from: $0) }
 
@@ -143,22 +222,10 @@ final class WindowReader {
         }
     }
 
-    private func accessibilityWindow(processID: Int32, bounds: CGRect) -> AXUIElement? {
-        let application = AXUIElementCreateApplication(pid_t(processID))
-
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            application,
-            kAXWindowsAttribute as CFString,
-            &value
-        ) == .success,
-            let windows = value as? [AXUIElement] else {
-            return nil
-        }
-
-        return windows.first { window in
-            guard let position = Self.pointAttribute(kAXPositionAttribute, from: window),
-                  let size = Self.sizeAttribute(kAXSizeAttribute, from: window) else {
+    static func accessibilityWindow(processID: Int32, bounds: CGRect) -> AXUIElement? {
+        accessibilityWindows(processID: processID).first { window in
+            guard let position = pointAttribute(kAXPositionAttribute, from: window),
+                  let size = sizeAttribute(kAXSizeAttribute, from: window) else {
                 return false
             }
 
@@ -168,6 +235,22 @@ final class WindowReader {
                 && abs(windowFrame.width - bounds.width) <= 4
                 && abs(windowFrame.height - bounds.height) <= 4
         }
+    }
+
+    static func accessibilityWindows(processID: Int32) -> [AXUIElement] {
+        let application = AXUIElementCreateApplication(pid_t(processID))
+
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            application,
+            kAXWindowsAttribute as CFString,
+            &value
+        ) == .success,
+            let windows = value as? [AXUIElement] else {
+            return []
+        }
+
+        return windows
     }
 
     static func stringAttribute(_ attribute: String, from element: AXUIElement) -> String? {

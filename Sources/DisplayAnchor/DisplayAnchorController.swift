@@ -12,6 +12,7 @@ final class DisplayAnchorController {
         case paused
         case permissionNeeded
         case snapshotSaved(Int)
+        case snapshotSkippedFullscreen
         case restoreScheduled
         case restoreWaitingForUnlock
         case restored(Int)
@@ -29,6 +30,8 @@ final class DisplayAnchorController {
                 return "Accessibility Permission Needed"
             case .snapshotSaved(let count):
                 return "Snapshot Saved: \(count) Windows"
+            case .snapshotSkippedFullscreen:
+                return "Skipped: Full Screen Active"
             case .restoreScheduled:
                 return "Waiting for Displays"
             case .restoreWaitingForUnlock:
@@ -57,7 +60,7 @@ final class DisplayAnchorController {
     private let store: SnapshotStore
     private let diagnostics = DiagnosticsLog()
     private let restoreRetryInterval: TimeInterval = 0.25
-    private let restoreTimeout: TimeInterval = 180
+    private let restoreTimeout: TimeInterval = 20
     private let failedRestoreSnapshotHold: TimeInterval = 600
     private var paused = false
     private var stableSnapshotTimer: Timer?
@@ -210,14 +213,21 @@ final class DisplayAnchorController {
             }
         }
 
+        guard let snapshotToSave = fullscreenProtectedSnapshot(for: snapshot, reason: reason) else {
+            if updateStatus {
+                status = .snapshotSkippedFullscreen
+            }
+            return
+        }
+
         automaticSnapshotSuppressedUntil = nil
 
         do {
-            try store.save(snapshot)
-            lastStableSnapshot = snapshot
-            diagnostics.write("snapshot saved reason=\(reason) windows=\(snapshot.windows.count) topology=\(Self.describe(snapshot.topology))")
+            try store.save(snapshotToSave)
+            lastStableSnapshot = snapshotToSave
+            diagnostics.write("snapshot saved reason=\(reason) windows=\(snapshotToSave.windows.count) topology=\(Self.describe(snapshotToSave.topology))")
             if updateStatus {
-                status = .snapshotSaved(snapshot.windows.count)
+                status = .snapshotSaved(snapshotToSave.windows.count)
             }
         } catch {
             diagnostics.write("snapshot error reason=\(reason) error=\(error.localizedDescription)")
@@ -239,12 +249,12 @@ final class DisplayAnchorController {
             return
         }
 
-        if !UserSessionState.isUnlocked, let lastStableSnapshot {
-            frozenSnapshot = lastStableSnapshot
+        if !UserSessionState.isUnlocked, let stableSnapshot = snapshotForFullscreenProtection() {
+            frozenSnapshot = stableSnapshot
 
             do {
-                try store.save(lastStableSnapshot)
-                diagnostics.write("freeze reused last stable snapshot reason=\(reason) session-locked stableTopology=\(Self.describe(lastStableSnapshot.topology))")
+                try store.save(stableSnapshot)
+                diagnostics.write("freeze reused last stable snapshot reason=\(reason) session-locked stableTopology=\(Self.describe(stableSnapshot.topology))")
             } catch {
                 diagnostics.write("freeze error reason=\(reason) error=\(error.localizedDescription)")
                 status = .error(error.localizedDescription)
@@ -262,7 +272,13 @@ final class DisplayAnchorController {
             snapshot = lastStableSnapshot
             diagnostics.write("freeze reused last stable snapshot reason=\(reason) liveTopology=\(Self.describe(liveSnapshot.topology)) stableTopology=\(Self.describe(lastStableSnapshot.topology))")
         } else {
-            snapshot = liveSnapshot
+            guard let protectedSnapshot = fullscreenProtectedSnapshot(for: liveSnapshot, reason: reason) else {
+                frozenSnapshot = snapshotForFullscreenProtection()
+                diagnostics.write("freeze kept previous snapshot reason=\(reason) fullscreen-active")
+                return
+            }
+
+            snapshot = protectedSnapshot
         }
 
         frozenSnapshot = snapshot
@@ -275,6 +291,54 @@ final class DisplayAnchorController {
             diagnostics.write("freeze error reason=\(reason) error=\(error.localizedDescription)")
             status = .error(error.localizedDescription)
         }
+    }
+
+    private func fullscreenProtectedSnapshot(for candidate: WindowSnapshot, reason: String) -> WindowSnapshot? {
+        let fullscreenScan = FullscreenWindowDetector.scan(topology: candidate.topology)
+
+        guard fullscreenScan.hasFullscreenWindows else {
+            return candidate
+        }
+
+        if !fullscreenScan.screensHaveSeparateSpaces {
+            diagnostics.write("snapshot skipped reason=\(reason) fullscreen-active shared-spaces fullscreenWindows=\(fullscreenScan.fullscreenWindowCount)")
+            return nil
+        }
+
+        guard fullscreenScan.hasIdentifiedAffectedDisplays else {
+            diagnostics.write("snapshot skipped reason=\(reason) fullscreen-active unidentified-display fullscreenWindows=\(fullscreenScan.fullscreenWindowCount) identifiedDisplays=\(Self.describe(fullscreenScan.affectedDisplayIDs)) unidentified=\(fullscreenScan.unidentifiedFullscreenWindowCount)")
+            return nil
+        }
+
+        guard let previousSnapshot = snapshotForFullscreenProtection() else {
+            diagnostics.write("snapshot skipped reason=\(reason) fullscreen-active no-previous-snapshot fullscreenDisplays=\(Self.describe(fullscreenScan.affectedDisplayIDs))")
+            return nil
+        }
+
+        guard RestorePlanner.readiness(
+            savedTopology: previousSnapshot.topology,
+            currentTopology: candidate.topology
+        ) == .ready else {
+            diagnostics.write("snapshot skipped reason=\(reason) fullscreen-active topology-changed current=\(Self.describe(candidate.topology)) previous=\(Self.describe(previousSnapshot.topology))")
+            return nil
+        }
+
+        let mergedSnapshot = SnapshotMerger.merge(
+            previous: previousSnapshot,
+            candidate: candidate,
+            preservingDisplayIDs: fullscreenScan.affectedDisplayIDs
+        )
+
+        diagnostics.write("snapshot merged reason=\(reason) fullscreenDisplays=\(Self.describe(fullscreenScan.affectedDisplayIDs)) previousWindows=\(previousSnapshot.windows.count) candidateWindows=\(candidate.windows.count) mergedWindows=\(mergedSnapshot.windows.count)")
+        return mergedSnapshot
+    }
+
+    private func snapshotForFullscreenProtection() -> WindowSnapshot? {
+        if let lastStableSnapshot {
+            return lastStableSnapshot
+        }
+
+        return try? store.load()
     }
 
     private func startStableSnapshotTimer() {
@@ -495,6 +559,17 @@ final class DisplayAnchorController {
                 return "\(uuid):id=\(display.id):main=\(display.isMain):frame=\(Int(frame.x)),\(Int(frame.y)),\(Int(frame.width)),\(Int(frame.height))"
             }
             .joined(separator: "|")
+    }
+
+    private static func describe(_ displayIDs: Set<UInt32>) -> String {
+        guard !displayIDs.isEmpty else {
+            return "none"
+        }
+
+        return displayIDs
+            .sorted()
+            .map(String.init)
+            .joined(separator: ",")
     }
 
     private static func format(_ date: Date) -> String {
