@@ -248,6 +248,8 @@ final class WindowReader {
 }
 
 final class WindowRestorer {
+    private let maxConcurrentProcessRestores = 2
+
     func restore(snapshot: WindowSnapshot) -> Int {
         let topology = DisplayReader.currentTopology()
 
@@ -261,18 +263,69 @@ final class WindowRestorer {
         let reader = WindowReader()
         let currentWindows = reader.currentWindows(topology: topology)
         let matches = WindowMatcher.match(saved: snapshot.windows, current: currentWindows)
+        let groups = processGroups(
+            matches: matches,
+            snapshot: snapshot,
+            currentWindows: currentWindows
+        )
 
-        var restoredCount = 0
+        let restoredCounter = RestoredCounter()
+        let queue = OperationQueue()
+        queue.name = "DisplayAnchor.WindowRestore"
+        queue.qualityOfService = .userInitiated
+        queue.maxConcurrentOperationCount = maxConcurrentProcessRestores
+
+        for group in groups {
+            queue.addOperation { [group] in
+                restoredCounter.add(Self.restore(group: group))
+            }
+        }
+
+        queue.waitUntilAllOperationsAreFinished()
+
+        return restoredCounter.count
+    }
+
+    private func processGroups(
+        matches: [WindowMatch],
+        snapshot: WindowSnapshot,
+        currentWindows: [WindowRecord]
+    ) -> [ProcessRestoreGroup] {
+        var groups: [ProcessRestoreGroup] = []
+        var groupIndexesByProcessID: [Int32: Int] = [:]
 
         for match in matches {
-            let savedWindow = snapshot.windows[match.savedIndex]
             let currentWindow = currentWindows[match.currentIndex]
+            let item = RestoreItem(
+                savedWindow: snapshot.windows[match.savedIndex],
+                currentWindow: currentWindow
+            )
 
-            guard let axWindow = findAXWindow(for: currentWindow) else {
+            if let groupIndex = groupIndexesByProcessID[currentWindow.processIdentifier] {
+                groups[groupIndex].items.append(item)
+            } else {
+                groupIndexesByProcessID[currentWindow.processIdentifier] = groups.count
+                groups.append(
+                    ProcessRestoreGroup(
+                        processIdentifier: currentWindow.processIdentifier,
+                        items: [item]
+                    )
+                )
+            }
+        }
+
+        return groups
+    }
+
+    private static func restore(group: ProcessRestoreGroup) -> Int {
+        var restoredCount = 0
+
+        for item in group.items {
+            guard let axWindow = findAXWindow(for: item.currentWindow) else {
                 continue
             }
 
-            if apply(frame: savedWindow.frame, to: axWindow) {
+            if apply(frame: item.savedWindow.frame, to: axWindow) {
                 restoredCount += 1
             }
         }
@@ -280,7 +333,7 @@ final class WindowRestorer {
         return restoredCount
     }
 
-    private func findAXWindow(for window: WindowRecord) -> AXUIElement? {
+    private static func findAXWindow(for window: WindowRecord) -> AXUIElement? {
         let application = AXUIElementCreateApplication(pid_t(window.processIdentifier))
 
         var value: CFTypeRef?
@@ -330,7 +383,7 @@ final class WindowRestorer {
             .element
     }
 
-    private func apply(frame: WindowFrame, to element: AXUIElement) -> Bool {
+    private static func apply(frame: WindowFrame, to element: AXUIElement) -> Bool {
         var size = CGSize(width: frame.width, height: frame.height)
         guard let sizeValue = AXValueCreate(.cgSize, &size) else {
             return false
@@ -361,5 +414,32 @@ final class WindowRestorer {
             + abs(lhs.y - rhs.y)
             + abs(lhs.width - rhs.width)
             + abs(lhs.height - rhs.height)
+    }
+}
+
+private struct ProcessRestoreGroup: Sendable {
+    var processIdentifier: Int32
+    var items: [RestoreItem]
+}
+
+private struct RestoreItem: Sendable {
+    var savedWindow: WindowRecord
+    var currentWindow: WindowRecord
+}
+
+private final class RestoredCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func add(_ count: Int) {
+        lock.lock()
+        value += count
+        lock.unlock()
     }
 }
