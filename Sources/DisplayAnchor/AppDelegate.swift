@@ -94,9 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             launchAtLoginMenuItem.state = .off
             launchAtLoginMenuItem.isEnabled = true
         case .notFound:
-            launchAtLoginMenuItem.title = "Launch at Login Unavailable"
+            launchAtLoginMenuItem.title = "Launch at Login"
             launchAtLoginMenuItem.state = .off
-            launchAtLoginMenuItem.isEnabled = false
+            launchAtLoginMenuItem.isEnabled = true
         @unknown default:
             launchAtLoginMenuItem.title = "Launch at Login Unavailable"
             launchAtLoginMenuItem.state = .off
@@ -135,7 +135,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .requiresApproval:
                 LaunchAtLogin.openSystemSettings()
             case .notFound:
-                NSSound.beep()
+                try LaunchAtLogin.enable()
+                if LaunchAtLogin.status == .requiresApproval {
+                    LaunchAtLogin.openSystemSettings()
+                }
             @unknown default:
                 NSSound.beep()
             }
