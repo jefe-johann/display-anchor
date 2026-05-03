@@ -30,5 +30,6 @@ esac
 mkdir -p "$DIST_DIR"
 rm -rf "$DIST_APP"
 /usr/bin/ditto "$SOURCE_APP" "$DIST_APP"
+touch "$DIST_APP"
 
 echo "Updated $DIST_APP"

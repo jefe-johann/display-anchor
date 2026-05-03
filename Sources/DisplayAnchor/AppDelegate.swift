@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let snapshotMenuItem = NSMenuItem(title: "Snapshot Now", action: #selector(snapshotNow), keyEquivalent: "")
     private let restoreMenuItem = NSMenuItem(title: "Restore Last Snapshot", action: #selector(restoreLastSnapshot), keyEquivalent: "")
     private let pauseMenuItem = NSMenuItem(title: "Pause Automatic Restore", action: #selector(togglePause), keyEquivalent: "")
+    private let launchAtLoginMenuItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -58,9 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         snapshotMenuItem.target = self
         restoreMenuItem.target = self
         pauseMenuItem.target = self
+        launchAtLoginMenuItem.target = self
         menu.addItem(snapshotMenuItem)
         menu.addItem(restoreMenuItem)
         menu.addItem(pauseMenuItem)
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(launchAtLoginMenuItem)
         menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(title: "Quit Display Anchor", action: #selector(quit), keyEquivalent: "q")
@@ -75,6 +79,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         restoreMenuItem.isEnabled = hasPermission
         pauseMenuItem.isEnabled = hasPermission
         pauseMenuItem.state = controller.isPaused() ? .on : .off
+
+        switch LaunchAtLogin.status {
+        case .enabled:
+            launchAtLoginMenuItem.title = "Launch at Login"
+            launchAtLoginMenuItem.state = .on
+            launchAtLoginMenuItem.isEnabled = true
+        case .notRegistered:
+            launchAtLoginMenuItem.title = "Launch at Login"
+            launchAtLoginMenuItem.state = .off
+            launchAtLoginMenuItem.isEnabled = true
+        case .requiresApproval:
+            launchAtLoginMenuItem.title = "Approve Launch at Login..."
+            launchAtLoginMenuItem.state = .off
+            launchAtLoginMenuItem.isEnabled = true
+        case .notFound:
+            launchAtLoginMenuItem.title = "Launch at Login Unavailable"
+            launchAtLoginMenuItem.state = .off
+            launchAtLoginMenuItem.isEnabled = false
+        @unknown default:
+            launchAtLoginMenuItem.title = "Launch at Login Unavailable"
+            launchAtLoginMenuItem.state = .off
+            launchAtLoginMenuItem.isEnabled = false
+        }
     }
 
     @objc private func openAccessibilitySettings() {
@@ -93,6 +120,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func togglePause() {
         controller.setPaused(!controller.isPaused())
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        do {
+            switch LaunchAtLogin.status {
+            case .enabled:
+                try LaunchAtLogin.disable()
+            case .notRegistered:
+                try LaunchAtLogin.enable()
+                if LaunchAtLogin.status == .requiresApproval {
+                    LaunchAtLogin.openSystemSettings()
+                }
+            case .requiresApproval:
+                LaunchAtLogin.openSystemSettings()
+            case .notFound:
+                NSSound.beep()
+            @unknown default:
+                NSSound.beep()
+            }
+        } catch {
+            statusMenuItem.title = "Error: \(error.localizedDescription)"
+        }
+
+        updateMenuState()
     }
 
     @objc private func quit() {
