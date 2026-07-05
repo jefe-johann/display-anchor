@@ -1,6 +1,6 @@
 # Display Anchor
 
-Display Anchor is a small macOS menu bar utility that snapshots window layouts and restores them after sleep/wake or display reconfiguration. 
+Display Anchor is a small macOS menu bar utility that snapshots window layouts and restores them after sleep/wake or display reconfiguration.
 
 If you use external monitors and frequently unplug your Mac or let it go to sleep, you've probably experienced the frustration of macOS moving your windows around. Display Anchor runs quietly in the background, keeping track of where your windows belong, and puts them back when your display setup is restored.
 
@@ -15,12 +15,12 @@ If you use external monitors and frequently unplug your Mac or let it go to slee
 
 ## Requirements
 
-- macOS 12.0 or later. (Note: Launch at Login functionality requires macOS 13.0+)
+- macOS 26.0 or later. (Note: This is the main difference between the original from Jeffrey Schumann and mine for now)
 - **Accessibility Permissions**: The app requires Accessibility permission to inspect and move windows. macOS will prompt you when you first launch the app.
 
 ## Building and Running
 
-Display Anchor supports both SwiftPM and Xcode builds. 
+Display Anchor supports both SwiftPM and Xcode builds.
 
 ### Quick Start (Script)
 

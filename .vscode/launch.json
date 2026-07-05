@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:display-anchor}",
+      "name": "Debug DisplayAnchor",
+      "target": "DisplayAnchor",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug DisplayAnchor"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:display-anchor}",
+      "name": "Release DisplayAnchor",
+      "target": "DisplayAnchor",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release DisplayAnchor"
+    }
+  ]
+}
